@@ -1,0 +1,37 @@
+# 飞书多维表格插件 - Nginx 配置示例
+# 用法：
+# 1. 将 npm run build 生成的 dist 目录内所有文件，复制到 /var/www/feishu-image-plugin/
+# 2. 把下面 server_name、ssl_certificate 改成你们公司的域名和证书路径
+# 3. nginx -t && systemctl reload nginx
+
+server {
+    listen 443 ssl http2;
+    server_name feishu-plugin.example.com;   # 改成你们的子域名
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+    root /var/www/feishu-image-plugin;
+    index index.html;
+
+    # 静态资源缓存
+    location /assets/ {
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+
+    # SPA：所有路径回落到 index.html（本插件入口即 index.html，一般够用）
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 允许被飞书 iframe 加载（按需收紧 frame-ancestors）
+    add_header X-Frame-Options "ALLOWALL" always;
+}
+
+# 可选：HTTP 跳转到 HTTPS
+server {
+    listen 80;
+    server_name feishu-plugin.example.com;
+    return 301 https://$host$request_uri;
+}
