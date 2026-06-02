@@ -54,6 +54,16 @@ export interface RecordGenerateParams {
   statusLabel: string;
 }
 
+/** 单次生图任务快照（点击时锁定，避免切换行写错记录） */
+export interface RecordJobSnapshot {
+  recordId: string;
+  prompt: string;
+  referenceImageUrls: string[];
+  aspectRatio: AspectRatio;
+  imageSize: ImageSize;
+  imageModel: string;
+}
+
 export interface VisualAgentState {
   recordId: string | null;
   recordTitle: string;
@@ -64,7 +74,10 @@ export interface VisualAgentState {
   status: GenerateStatus;
   progress: number;
   error: string | null;
+  /** 正在读取表格 */
   loading: boolean;
   message: string;
+  /** 正在生图的 recordId 列表 */
+  generatingRecordIds: string[];
 }
 // AIGC END

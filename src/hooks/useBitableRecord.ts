@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '../constants';
 import type {
   RecordFieldMapping,
   RecordGenerateParams,
+  RecordJobSnapshot,
   VisualAgentState,
 } from '../types';
 import {
@@ -15,6 +16,7 @@ import {
   normalizeModel,
   readAllReferenceUrls,
   readAttachmentUrls,
+  readRecordSnapshot,
   readSelectCell,
   readTextCell,
   resolveActiveRecordId,
@@ -49,6 +51,7 @@ export function useBitableRecord() {
     error: null,
     loading: false,
     message: '',
+    generatingRecordIds: [],
   });
   const [tableHint, setTableHint] = useState('正在连接多维表格…');
 
@@ -95,7 +98,9 @@ export function useBitableRecord() {
             ...s,
             recordId: null,
             loading: false,
-            error: '请先在表格中选中一行（勾选行首或点进单元格）',
+            error: s.generatingRecordIds.length
+              ? null
+              : '请先在表格中选中一行（勾选行首或点进单元格）',
           }));
           return;
         }
@@ -136,28 +141,19 @@ export function useBitableRecord() {
           );
         }
         if (mapping.aspectRatioFieldId) {
-          const raw = await readSelectCell(
-            table,
-            mapping.aspectRatioFieldId,
-            recordId,
+          generateParams.aspectRatio = normalizeAspectRatio(
+            await readSelectCell(table, mapping.aspectRatioFieldId, recordId),
           );
-          generateParams.aspectRatio = normalizeAspectRatio(raw);
         }
         if (mapping.imageSizeFieldId) {
-          const raw = await readSelectCell(
-            table,
-            mapping.imageSizeFieldId,
-            recordId,
+          generateParams.imageSize = normalizeImageSize(
+            await readSelectCell(table, mapping.imageSizeFieldId, recordId),
           );
-          generateParams.imageSize = normalizeImageSize(raw);
         }
         if (mapping.modelFieldId) {
-          const raw = await readSelectCell(
-            table,
-            mapping.modelFieldId,
-            recordId,
+          generateParams.imageModel = normalizeModel(
+            await readSelectCell(table, mapping.modelFieldId, recordId),
           );
-          generateParams.imageModel = normalizeModel(raw);
         }
         if (mapping.statusFieldId) {
           generateParams.statusLabel = await readSelectCell(
@@ -193,29 +189,55 @@ export function useBitableRecord() {
     [mapping],
   );
 
+  const addGeneratingRecord = useCallback((recordId: string) => {
+    setState((s) => ({
+      ...s,
+      generatingRecordIds: s.generatingRecordIds.includes(recordId)
+        ? s.generatingRecordIds
+        : [...s.generatingRecordIds, recordId],
+    }));
+  }, []);
+
+  const removeGeneratingRecord = useCallback((recordId: string) => {
+    setState((s) => ({
+      ...s,
+      generatingRecordIds: s.generatingRecordIds.filter((id) => id !== recordId),
+    }));
+  }, []);
+
+  /** 点击生图时从表格锁定该行数据，避免切换行后写错记录 */
+  const createJobSnapshot = useCallback(
+    async (recordId: string, promptOverride?: string): Promise<RecordJobSnapshot> => {
+      const snapshot = await readRecordSnapshot(recordId, mapping);
+      const override = promptOverride?.trim();
+      if (override) {
+        snapshot.prompt = override;
+      }
+      return snapshot;
+    },
+    [mapping],
+  );
+
   const persistPrompt = useCallback(
-    async (prompt: string) => {
-      const recordId = state.recordId;
+    async (text: string, recordId: string) => {
       if (!recordId || !mapping.promptFieldId) return;
       const table = await bitable.base.getActiveTable();
-      await writeTextCell(table, mapping.promptFieldId, recordId, prompt);
+      await writeTextCell(table, mapping.promptFieldId, recordId, text);
     },
-    [mapping.promptFieldId, state.recordId],
+    [mapping.promptFieldId],
   );
 
   const persistStatus = useCallback(
-    async (label: string) => {
-      const recordId = state.recordId;
+    async (label: string, recordId: string) => {
       if (!recordId || !mapping.statusFieldId || !label) return;
       const table = await bitable.base.getActiveTable();
       await writeSelectCell(table, mapping.statusFieldId, recordId, label);
     },
-    [mapping.statusFieldId, state.recordId],
+    [mapping.statusFieldId],
   );
 
   const persistGeneratedImage = useCallback(
-    async (imageUrl: string): Promise<string[]> => {
-      const recordId = state.recordId;
+    async (imageUrl: string, recordId: string): Promise<string[]> => {
       if (!recordId || !mapping.resultImageFieldId) {
         throw new Error('未找到「结果图」附件字段');
       }
@@ -227,7 +249,7 @@ export function useBitableRecord() {
         imageUrl,
       );
     },
-    [mapping.resultImageFieldId, state.recordId],
+    [mapping.resultImageFieldId],
   );
 
   useEffect(() => {
@@ -240,7 +262,7 @@ export function useBitableRecord() {
 
   useEffect(() => {
     const offBase = bitable.base.onSelectionChange(() => {
-      void loadRecord();
+      void loadRecord({ silent: true });
     });
     return () => offBase();
   }, [loadRecord]);
@@ -255,7 +277,7 @@ export function useBitableRecord() {
           clearTimeout(timer);
           timer = setTimeout(() => {
             void loadRecord({ silent: true });
-          }, 500);
+          }, 800);
         });
       } catch {
         /* ignore */
@@ -273,6 +295,9 @@ export function useBitableRecord() {
     mapping,
     tableHint,
     loadRecord,
+    createJobSnapshot,
+    addGeneratingRecord,
+    removeGeneratingRecord,
     persistPrompt,
     persistStatus,
     persistGeneratedImage,

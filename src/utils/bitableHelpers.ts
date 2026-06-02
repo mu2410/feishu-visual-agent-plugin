@@ -7,7 +7,7 @@ import {
   type ITable,
   type ITextField,
 } from '@lark-base-open/js-sdk';
-import type { AspectRatio, ImageSize, RecordFieldMapping } from '../types';
+import type { AspectRatio, ImageSize, RecordFieldMapping, RecordGenerateParams, RecordJobSnapshot } from '../types';
 import { DEFAULT_SETTINGS } from '../constants';
 
 /** 边栏插件中 getSelection().recordId 常为空，优先读当前视图选中行 */
@@ -138,8 +138,59 @@ export function normalizeImageSize(raw: string): ImageSize {
 export function normalizeModel(raw: string): string {
   const t = raw.trim();
   if (!t) return DEFAULT_SETTINGS.imageModel;
-  if (t.includes('nano-banana')) return t;
   return t;
+}
+
+/** 从表格读取指定行的完整生图参数（不依赖 UI 当前状态） */
+export async function readRecordSnapshot(
+  recordId: string,
+  mapping: RecordFieldMapping,
+): Promise<RecordJobSnapshot> {
+  const table = await bitable.base.getActiveTable();
+  const generateParams: RecordGenerateParams = {
+    aspectRatio: DEFAULT_SETTINGS.aspectRatio,
+    imageSize: DEFAULT_SETTINGS.imageSize,
+    imageModel: DEFAULT_SETTINGS.imageModel,
+    statusLabel: '',
+  };
+
+  let prompt = '';
+  let referenceImageUrls: string[] = [];
+
+  if (mapping.promptFieldId) {
+    prompt = await readTextCell(table, mapping.promptFieldId, recordId);
+  }
+  if (mapping.referenceImageFieldIds.length) {
+    referenceImageUrls = await readAllReferenceUrls(
+      table,
+      mapping.referenceImageFieldIds,
+      recordId,
+    );
+  }
+  if (mapping.aspectRatioFieldId) {
+    generateParams.aspectRatio = normalizeAspectRatio(
+      await readSelectCell(table, mapping.aspectRatioFieldId, recordId),
+    );
+  }
+  if (mapping.imageSizeFieldId) {
+    generateParams.imageSize = normalizeImageSize(
+      await readSelectCell(table, mapping.imageSizeFieldId, recordId),
+    );
+  }
+  if (mapping.modelFieldId) {
+    generateParams.imageModel = normalizeModel(
+      await readSelectCell(table, mapping.modelFieldId, recordId),
+    );
+  }
+
+  return {
+    recordId,
+    prompt,
+    referenceImageUrls,
+    aspectRatio: generateParams.aspectRatio,
+    imageSize: generateParams.imageSize,
+    imageModel: generateParams.imageModel,
+  };
 }
 
 /** 按当前表标准字段名自动映射 */

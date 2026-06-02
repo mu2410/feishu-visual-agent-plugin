@@ -7,7 +7,7 @@ import { PLUGIN_TITLE } from './constants';
 import { useBitableRecord } from './hooks/useBitableRecord';
 import { useTheme } from './hooks/useTheme';
 import { generateImage } from './services/nanoBanana';
-import type { PluginSettings } from './types';
+import type { PluginSettings, RecordJobSnapshot } from './types';
 import { copyToClipboard } from './utils/clipboard';
 import { toChineseError } from './utils/errorMessage';
 import { loadSettings, saveSettings } from './utils/settings';
@@ -23,6 +23,9 @@ function App() {
     mapping,
     tableHint,
     loadRecord,
+    createJobSnapshot,
+    addGeneratingRecord,
+    removeGeneratingRecord,
     persistPrompt,
     persistStatus,
     persistGeneratedImage,
@@ -39,6 +42,10 @@ function App() {
 
   const { aspectRatio, imageSize, imageModel } = state.generateParams;
 
+  const isCurrentGenerating = state.recordId
+    ? state.generatingRecordIds.includes(state.recordId)
+    : false;
+
   const tags = useMemo(
     () => [
       state.recordTitle || state.recordId?.slice(0, 10) || '未选记录',
@@ -47,107 +54,145 @@ function App() {
       state.generateParams.statusLabel
         ? `状态: ${state.generateParams.statusLabel}`
         : '',
+      state.generatingRecordIds.length
+        ? `后台生图中 ${state.generatingRecordIds.length} 条`
+        : '',
     ].filter(Boolean),
     [state, aspectRatio, imageSize, imageModel],
   );
 
+  const runGenerateJob = async (job: RecordJobSnapshot) => {
+    await persistPrompt(job.prompt, job.recordId);
+    await persistStatus('生成中', job.recordId);
+
+    const res = await generateImage(
+      {
+        ...settings,
+        imageModel: job.imageModel,
+        aspectRatio: job.aspectRatio,
+        imageSize: job.imageSize,
+      },
+      {
+        prompt: job.prompt,
+        images: job.referenceImageUrls,
+        aspectRatio: job.aspectRatio,
+        imageSize: job.imageSize,
+      },
+    );
+
+    if (res.status === 'succeeded' && res.results?.[0]?.url) {
+      const url = res.results[0].url;
+      if (mapping.resultImageFieldId) {
+        try {
+          const urls = await persistGeneratedImage(url, job.recordId);
+          await persistStatus('成功', job.recordId);
+          return {
+            ok: true as const,
+            recordId: job.recordId,
+            previewUrl: urls[0] ?? url,
+            message: `记录 ${job.recordId.slice(0, 8)}… 生图成功，已写入结果图`,
+          };
+        } catch (writeErr) {
+          await persistStatus('成功', job.recordId);
+          return {
+            ok: true as const,
+            recordId: job.recordId,
+            previewUrl: url,
+            message: `记录 ${job.recordId.slice(0, 8)}… 生图成功，写回结果图失败：${toChineseError(writeErr)}`,
+          };
+        }
+      }
+      return {
+        ok: true as const,
+        recordId: job.recordId,
+        previewUrl: url,
+        message: `记录 ${job.recordId.slice(0, 8)}… 生图成功（未找到结果图列）`,
+      };
+    }
+
+    if (res.status === 'running') {
+      await persistStatus('生成中', job.recordId);
+      return {
+        ok: true as const,
+        recordId: job.recordId,
+        previewUrl: null,
+        message: `记录 ${job.recordId.slice(0, 8)}… 任务进行中，ID: ${res.id}`,
+      };
+    }
+
+    throw new Error(res.error || `生图状态: ${res.status}`);
+  };
+
   const handleGenerate = async () => {
+    const targetRecordId = state.recordId;
     if (!settings.grsaiApiKey) {
       setState((s) => ({ ...s, error: '请先在设置中填写 Grsai API Key' }));
       return;
     }
-    if (!prompt.trim()) {
+    if (!targetRecordId) {
+      setState((s) => ({
+        ...s,
+        error: '请先在表格中选中一行（勾选行首或点进单元格）',
+      }));
+      return;
+    }
+    if (state.generatingRecordIds.includes(targetRecordId)) {
+      setState((s) => ({ ...s, error: '当前记录正在生图中，请稍候' }));
+      return;
+    }
+
+    let job: RecordJobSnapshot;
+    try {
+      job = await createJobSnapshot(
+        targetRecordId,
+        targetRecordId === state.recordId ? prompt : undefined,
+      );
+    } catch (e) {
+      setState((s) => ({ ...s, error: toChineseError(e) }));
+      return;
+    }
+
+    if (!job.prompt.trim()) {
       setState((s) => ({ ...s, error: '请在 Prompt 列或下方填写提示词' }));
       return;
     }
 
-    setState((s) => ({
-      ...s,
-      loading: true,
-      status: 'running',
-      progress: 0,
-      error: null,
-      message: '',
-    }));
+    addGeneratingRecord(targetRecordId);
+    setState((s) => ({ ...s, error: null, message: `已开始为当前记录生图…` }));
 
     try {
-      await persistPrompt(prompt);
-      await persistStatus('生成中');
-
-      const res = await generateImage(
-        {
-          ...settings,
-          imageModel,
-          aspectRatio,
-          imageSize,
-        },
-        {
-          prompt,
-          images: state.referenceImageUrls,
-          aspectRatio,
-          imageSize,
-        },
-      );
-
-      if (res.status === 'succeeded' && res.results?.[0]?.url) {
-        const url = res.results[0].url;
-        if (mapping.resultImageFieldId) {
-          try {
-            const urls = await persistGeneratedImage(url);
-            await persistStatus('成功');
-            setState((s) => ({
-              ...s,
-              resultImageUrl: urls[0] ?? url,
-              status: 'succeeded',
-              progress: 100,
-              loading: false,
-              message: '生图成功，已写入「结果图」并更新状态',
-              generateParams: { ...s.generateParams, statusLabel: '成功' },
-            }));
-          } catch (writeErr) {
-            await persistStatus('成功');
-            setState((s) => ({
-              ...s,
-              resultImageUrl: url,
-              status: 'succeeded',
-              progress: 100,
-              loading: false,
-              message: `生图成功，写回结果图失败：${toChineseError(writeErr)}`,
-            }));
-          }
-        } else {
-          setState((s) => ({
-            ...s,
-            resultImageUrl: url,
-            status: 'succeeded',
-            progress: 100,
-            loading: false,
-            message: '生图成功（未找到「结果图」列）',
-          }));
-        }
-        return;
-      }
-      if (res.status === 'running') {
-        await persistStatus('生成中');
-        setState((s) => ({
+      const result = await runGenerateJob(job);
+      setState((s) => {
+        const isViewing = s.recordId === result.recordId;
+        return {
           ...s,
-          status: 'running',
-          progress: res.progress ?? 0,
-          loading: false,
-          message: `任务进行中，ID: ${res.id}`,
-        }));
-      } else {
-        throw new Error(res.error || `生图状态: ${res.status}`);
-      }
+          status: 'succeeded',
+          progress: 100,
+          message: result.message,
+          resultImageUrl: isViewing && result.previewUrl ? result.previewUrl : s.resultImageUrl,
+          generateParams: isViewing
+            ? { ...s.generateParams, statusLabel: '成功' }
+            : s.generateParams,
+        };
+      });
     } catch (e) {
-      await persistStatus('失败');
-      setState((s) => ({
-        ...s,
-        loading: false,
-        status: 'failed',
-        error: toChineseError(e),
-        generateParams: { ...s.generateParams, statusLabel: '失败' },
-      }));
+      await persistStatus('失败', job.recordId);
+      setState((s) => {
+        const isViewing = s.recordId === job.recordId;
+        return {
+          ...s,
+          status: 'failed',
+          error: isViewing ? toChineseError(e) : s.error,
+          message: isViewing
+            ? s.message
+            : `记录 ${job.recordId.slice(0, 8)}… 生图失败：${toChineseError(e)}`,
+          generateParams: isViewing
+            ? { ...s.generateParams, statusLabel: '失败' }
+            : s.generateParams,
+        };
+      });
+    } finally {
+      removeGeneratingRecord(targetRecordId);
     }
   };
 
@@ -223,10 +268,10 @@ function App() {
           <button
             type="button"
             className="va-btn va-btn--success va-btn--block"
-            disabled={state.loading}
+            disabled={isCurrentGenerating || state.loading}
             onClick={() => void handleGenerate()}
           >
-            {state.loading ? '生成中…' : '生成图片'}
+            {isCurrentGenerating ? '当前记录生成中…' : '生成图片'}
           </button>
         </div>
       </section>
