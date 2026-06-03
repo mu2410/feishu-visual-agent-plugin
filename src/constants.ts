@@ -39,4 +39,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const SETTINGS_STORAGE_KEY = 'visual-agent-plugin-settings-v2';
+
+/** 结果图列输出边长（生图后缩放为 1440×1440） */
+export const RESULT_IMAGE_1440_SIZE = 1440;
 // AIGC END

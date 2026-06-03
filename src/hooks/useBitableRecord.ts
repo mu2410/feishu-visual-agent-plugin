@@ -20,7 +20,7 @@ import {
   readSelectCell,
   readTextCell,
   resolveActiveRecordId,
-  writeGeneratedImageToField,
+  writeGeneratedImageResults,
   writeSelectCell,
   writeTextCell,
 } from '../utils/bitableHelpers';
@@ -237,16 +237,16 @@ export function useBitableRecord() {
   );
 
   const persistGeneratedImage = useCallback(
-    async (imageUrl: string, recordId: string): Promise<string[]> => {
+    async (imageUrl: string, recordId: string) => {
       if (!recordId || !mapping.resultImageFieldId) {
         throw new Error('未找到「结果图」附件字段');
       }
       const table = await bitable.base.getActiveTable();
-      return writeGeneratedImageToField(
+      return writeGeneratedImageResults(
         table,
-        mapping.resultImageFieldId,
         recordId,
         imageUrl,
+        mapping.resultImageFieldId,
       );
     },
     [mapping.resultImageFieldId],

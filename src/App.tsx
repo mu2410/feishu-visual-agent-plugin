@@ -86,11 +86,12 @@ function App() {
         try {
           const urls = await persistGeneratedImage(url, job.recordId);
           await persistStatus('成功', job.recordId);
+          const previewUrl = urls[0] ?? url;
           return {
             ok: true as const,
             recordId: job.recordId,
-            previewUrl: urls[0] ?? url,
-            message: `记录 ${job.recordId.slice(0, 8)}… 生图成功，已写入结果图`,
+            previewUrl,
+            message: `记录 ${job.recordId.slice(0, 8)}… 生图成功，已写入结果图（1440×1440）`,
           };
         } catch (writeErr) {
           await persistStatus('成功', job.recordId);

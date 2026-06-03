@@ -8,7 +8,8 @@ import {
   type ITextField,
 } from '@lark-base-open/js-sdk';
 import type { AspectRatio, ImageSize, RecordFieldMapping, RecordGenerateParams, RecordJobSnapshot } from '../types';
-import { DEFAULT_SETTINGS } from '../constants';
+import { DEFAULT_SETTINGS, RESULT_IMAGE_1440_SIZE } from '../constants';
+import { resizeImageBlob } from './imageResize';
 
 /** 边栏插件中 getSelection().recordId 常为空，优先读当前视图选中行 */
 export async function resolveActiveRecordId(): Promise<string | null> {
@@ -216,7 +217,11 @@ export function guessFieldMapping(
     imageSizeFieldId: byExact('尺寸'),
     modelFieldId: byExact('模型'),
     statusFieldId: byExact('状态'),
-    resultImageFieldId: byExact('结果图') ?? byName(['结果图', '成图']),
+    resultImageFieldId:
+      byExact('结果图') ??
+      metaList.find(
+        (m) => m.type === FieldType.Attachment && m.name.includes('结果图'),
+      )?.id,
   };
 }
 
@@ -224,25 +229,57 @@ export function isStandardTableMapping(mapping: RecordFieldMapping): boolean {
   return Boolean(mapping.promptFieldId && mapping.resultImageFieldId);
 }
 
-/** 将 API 返回的图片 URL 下载后写入「结果图」附件列 */
-export async function writeGeneratedImageToField(
-  table: ITable,
-  fieldId: string,
-  recordId: string,
-  imageUrl: string,
-): Promise<string[]> {
+async function downloadImageBlob(imageUrl: string): Promise<Blob> {
   const res = await fetch(imageUrl);
   if (!res.ok) {
     throw new Error(`下载生成图失败 (${res.status})`);
   }
-  const blob = await res.blob();
-  const ext = blob.type.includes('png') ? 'png' : 'jpg';
-  const file = new File([blob], `generated-${Date.now()}.${ext}`, {
+  return res.blob();
+}
+
+async function uploadBlobToAttachmentField(
+  table: ITable,
+  fieldId: string,
+  recordId: string,
+  blob: Blob,
+  filename: string,
+): Promise<string[]> {
+  const file = new File([blob], filename, {
     type: blob.type || 'image/jpeg',
   });
   const field = await table.getField<IAttachmentField>(fieldId);
   await field.setValue(recordId, file);
   const urls = await field.getAttachmentUrls(recordId);
   return urls ?? [];
+}
+
+/** 下载生图结果，缩放为 1440×1440 后写入「结果图」 */
+export async function writeGeneratedImageResults(
+  table: ITable,
+  recordId: string,
+  imageUrl: string,
+  resultImageFieldId: string,
+  size = RESULT_IMAGE_1440_SIZE,
+): Promise<string[]> {
+  const blob = await downloadImageBlob(imageUrl);
+  const resized = await resizeImageBlob(blob, size, size, 'cover');
+  const ts = Date.now();
+  return uploadBlobToAttachmentField(
+    table,
+    resultImageFieldId,
+    recordId,
+    resized,
+    `generated-${size}x${size}-${ts}.jpg`,
+  );
+}
+
+/** @deprecated 请使用 writeGeneratedImageResults */
+export async function writeGeneratedImageToField(
+  table: ITable,
+  fieldId: string,
+  recordId: string,
+  imageUrl: string,
+): Promise<string[]> {
+  return writeGeneratedImageResults(table, recordId, imageUrl, fieldId);
 }
 // AIGC END
