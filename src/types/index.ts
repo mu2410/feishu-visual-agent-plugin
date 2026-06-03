@@ -20,6 +20,12 @@ export type AspectRatio =
 
 export type ImageSize = '1K' | '2K' | '4K';
 
+/** 结果图输出尺寸（宽×高，像素） */
+export interface ResultImagePixels {
+  width: number;
+  height: number;
+}
+
 export type GenerateStatus = 'idle' | 'running' | 'succeeded' | 'failed' | 'violation';
 
 export interface PluginSettings {
@@ -39,6 +45,8 @@ export interface RecordFieldMapping {
   modelFieldId?: string;
   statusFieldId?: string;
   resultImageFieldId?: string;
+  /** 结果图像素（如 1440*1440、1000*1792） */
+  resultImagePixelFieldId?: string;
 }
 
 export interface FieldOption {
@@ -52,6 +60,8 @@ export interface RecordGenerateParams {
   imageSize: ImageSize;
   imageModel: string;
   statusLabel: string;
+  /** 结果图输出尺寸，默认 1440×1440 */
+  resultImagePixels: ResultImagePixels;
 }
 
 /** 单次生图任务快照（点击时锁定，避免切换行写错记录） */
@@ -62,6 +72,7 @@ export interface RecordJobSnapshot {
   aspectRatio: AspectRatio;
   imageSize: ImageSize;
   imageModel: string;
+  resultImagePixels: ResultImagePixels;
 }
 
 export interface VisualAgentState {

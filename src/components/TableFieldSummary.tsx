@@ -1,5 +1,6 @@
 // AIGC START
 import type { RecordFieldMapping, RecordGenerateParams } from '../types';
+import { formatResultImagePixels } from '../utils/bitableHelpers';
 
 interface Props {
   mapping: RecordFieldMapping;
@@ -27,14 +28,26 @@ export function TableFieldSummary({
         : '状态',
       ok: Boolean(mapping.statusFieldId),
     },
-    { label: '结果图（1440×1440）', ok: Boolean(mapping.resultImageFieldId) },
+    {
+      label: mapping.resultImagePixelFieldId
+        ? `结果图像素 ${formatResultImagePixels(generateParams.resultImagePixels)}`
+        : '结果图像素',
+      ok: Boolean(mapping.resultImagePixelFieldId),
+    },
+    {
+      label: mapping.resultImageFieldId
+        ? `结果图 ${formatResultImagePixels(generateParams.resultImagePixels)}`
+        : '结果图',
+      ok: Boolean(mapping.resultImageFieldId),
+    },
   ];
 
   return (
     <section className="va-card va-card--compact">
       <h3 className="va-card__title">表格字段（自动匹配）</h3>
       <p className="va-hint">
-        比例、尺寸、模型请在表格对应列修改；生图后会更新「状态」，并将 1440×1440 图片写入「结果图」列。
+        比例、尺寸、模型、结果图像素请在表格对应列修改；生图后会更新「状态」，并按所选像素（如
+        1000*1792、1440*1440）缩放后写入「结果图」列（未填时默认 1440×1440）。
       </p>
       <ul className="va-field-list">
         {items.map((item) => (

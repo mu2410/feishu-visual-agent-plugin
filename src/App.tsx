@@ -8,6 +8,7 @@ import { useBitableRecord } from './hooks/useBitableRecord';
 import { useTheme } from './hooks/useTheme';
 import { generateImage } from './services/nanoBanana';
 import type { PluginSettings, RecordJobSnapshot } from './types';
+import { formatResultImagePixels } from './utils/bitableHelpers';
 import { copyToClipboard } from './utils/clipboard';
 import { toChineseError } from './utils/errorMessage';
 import { loadSettings, saveSettings } from './utils/settings';
@@ -40,7 +41,7 @@ function App() {
     saveSettings(s);
   }, []);
 
-  const { aspectRatio, imageSize, imageModel } = state.generateParams;
+  const { aspectRatio, imageSize, imageModel, resultImagePixels } = state.generateParams;
 
   const isCurrentGenerating = state.recordId
     ? state.generatingRecordIds.includes(state.recordId)
@@ -51,6 +52,7 @@ function App() {
       state.recordTitle || state.recordId?.slice(0, 10) || '未选记录',
       imageModel,
       `${aspectRatio} · ${imageSize}`,
+      `结果图 ${formatResultImagePixels(resultImagePixels)}`,
       state.generateParams.statusLabel
         ? `状态: ${state.generateParams.statusLabel}`
         : '',
@@ -58,7 +60,7 @@ function App() {
         ? `后台生图中 ${state.generatingRecordIds.length} 条`
         : '',
     ].filter(Boolean),
-    [state, aspectRatio, imageSize, imageModel],
+    [state, aspectRatio, imageSize, imageModel, resultImagePixels],
   );
 
   const runGenerateJob = async (job: RecordJobSnapshot) => {
@@ -84,14 +86,19 @@ function App() {
       const url = res.results[0].url;
       if (mapping.resultImageFieldId) {
         try {
-          const urls = await persistGeneratedImage(url, job.recordId);
+          const { urls } = await persistGeneratedImage(
+            url,
+            job.recordId,
+            job.resultImagePixels,
+          );
           await persistStatus('成功', job.recordId);
           const previewUrl = urls[0] ?? url;
+          const sizeLabel = formatResultImagePixels(job.resultImagePixels);
           return {
             ok: true as const,
             recordId: job.recordId,
             previewUrl,
-            message: `记录 ${job.recordId.slice(0, 8)}… 生图成功，已写入结果图（1440×1440）`,
+            message: `记录 ${job.recordId.slice(0, 8)}… 生图成功，已写入结果图（${sizeLabel}）`,
           };
         } catch (writeErr) {
           await persistStatus('成功', job.recordId);

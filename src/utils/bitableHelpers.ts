@@ -7,8 +7,8 @@ import {
   type ITable,
   type ITextField,
 } from '@lark-base-open/js-sdk';
-import type { AspectRatio, ImageSize, RecordFieldMapping, RecordGenerateParams, RecordJobSnapshot } from '../types';
-import { DEFAULT_SETTINGS, RESULT_IMAGE_1440_SIZE } from '../constants';
+import type { AspectRatio, ImageSize, RecordFieldMapping, RecordGenerateParams, RecordJobSnapshot, ResultImagePixels } from '../types';
+import { DEFAULT_SETTINGS, DEFAULT_RESULT_IMAGE_PIXELS, MAX_RESULT_IMAGE_PIXEL, MIN_RESULT_IMAGE_PIXEL, SUPPORTED_ASPECT_RATIOS } from '../constants';
 import { resizeImageBlob } from './imageResize';
 
 /** 边栏插件中 getSelection().recordId 常为空，优先读当前视图选中行 */
@@ -112,13 +112,10 @@ export async function writeTextCell(
   await field.setValue(recordId, value);
 }
 
-const ASPECT_SET = new Set<string>([
-  'auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
-  '5:4', '4:5', '21:9', '1:4', '4:1', '1:8', '8:1',
-]);
+const ASPECT_SET = new Set<string>(SUPPORTED_ASPECT_RATIOS);
 
 export function normalizeAspectRatio(raw: string): AspectRatio {
-  const t = raw.trim();
+  const t = raw.trim().replace(/：/g, ':');
   if (ASPECT_SET.has(t)) return t as AspectRatio;
   const m = t.match(/(\d+\s*:\s*\d+|auto)/i);
   if (m) {
@@ -142,6 +139,60 @@ export function normalizeModel(raw: string): string {
   return t;
 }
 
+/** 从「结果图像素」列解析输出尺寸，支持 1000*1792、1440*1440、1440 等 */
+export function parseResultImagePixels(
+  raw: string,
+  fallback: ResultImagePixels = DEFAULT_RESULT_IMAGE_PIXELS,
+): ResultImagePixels {
+  const t = raw.trim().replace(/×/g, '*').replace(/[xX]/g, '*');
+  if (!t) return fallback;
+
+  const pair = t.match(/(\d{2,5})\s*\*\s*(\d{2,5})/);
+  if (pair) {
+    const width = parseInt(pair[1], 10);
+    const height = parseInt(pair[2], 10);
+    if (isValidResultImagePixel(width) && isValidResultImagePixel(height)) {
+      return { width, height };
+    }
+  }
+
+  const single = t.match(/^(\d{2,5})$/);
+  if (single) {
+    const n = parseInt(single[1], 10);
+    if (isValidResultImagePixel(n)) return { width: n, height: n };
+  }
+
+  return fallback;
+}
+
+function isValidResultImagePixel(n: number): boolean {
+  return n >= MIN_RESULT_IMAGE_PIXEL && n <= MAX_RESULT_IMAGE_PIXEL;
+}
+
+export function formatResultImagePixels(pixels: ResultImagePixels): string {
+  return `${pixels.width}×${pixels.height}`;
+}
+
+export async function readPixelCell(
+  table: ITable,
+  fieldId: string,
+  recordId: string,
+): Promise<string> {
+  const text = await readTextCell(table, fieldId, recordId);
+  if (text) return text;
+  const select = await readSelectCell(table, fieldId, recordId);
+  if (select) return select;
+  try {
+    const val = await table.getCellValue(fieldId, recordId);
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      return String(Math.round(val));
+    }
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
 /** 从表格读取指定行的完整生图参数（不依赖 UI 当前状态） */
 export async function readRecordSnapshot(
   recordId: string,
@@ -153,6 +204,7 @@ export async function readRecordSnapshot(
     imageSize: DEFAULT_SETTINGS.imageSize,
     imageModel: DEFAULT_SETTINGS.imageModel,
     statusLabel: '',
+    resultImagePixels: DEFAULT_RESULT_IMAGE_PIXELS,
   };
 
   let prompt = '';
@@ -183,6 +235,11 @@ export async function readRecordSnapshot(
       await readSelectCell(table, mapping.modelFieldId, recordId),
     );
   }
+  if (mapping.resultImagePixelFieldId) {
+    generateParams.resultImagePixels = parseResultImagePixels(
+      await readPixelCell(table, mapping.resultImagePixelFieldId, recordId),
+    );
+  }
 
   return {
     recordId,
@@ -191,6 +248,7 @@ export async function readRecordSnapshot(
     aspectRatio: generateParams.aspectRatio,
     imageSize: generateParams.imageSize,
     imageModel: generateParams.imageModel,
+    resultImagePixels: generateParams.resultImagePixels,
   };
 }
 
@@ -220,8 +278,12 @@ export function guessFieldMapping(
     resultImageFieldId:
       byExact('结果图') ??
       metaList.find(
-        (m) => m.type === FieldType.Attachment && m.name.includes('结果图'),
+        (m) =>
+          m.type === FieldType.Attachment && m.name.includes('结果图'),
       )?.id,
+    resultImagePixelFieldId:
+      byExact('结果图像素') ??
+      byName(['结果图像素', '结果图尺寸', '输出像素']),
   };
 }
 
@@ -253,24 +315,30 @@ async function uploadBlobToAttachmentField(
   return urls ?? [];
 }
 
-/** 下载生图结果，缩放为 1440×1440 后写入「结果图」 */
+export interface WriteGeneratedImageResult {
+  urls: string[];
+}
+
+/** 下载生图结果，按指定宽×高缩放后写入「结果图」 */
 export async function writeGeneratedImageResults(
   table: ITable,
   recordId: string,
   imageUrl: string,
   resultImageFieldId: string,
-  size = RESULT_IMAGE_1440_SIZE,
-): Promise<string[]> {
+  outputPixels: ResultImagePixels = DEFAULT_RESULT_IMAGE_PIXELS,
+): Promise<WriteGeneratedImageResult> {
   const blob = await downloadImageBlob(imageUrl);
-  const resized = await resizeImageBlob(blob, size, size, 'cover');
+  const { width, height } = outputPixels;
+  const resized = await resizeImageBlob(blob, width, height, 'cover');
   const ts = Date.now();
-  return uploadBlobToAttachmentField(
+  const urls = await uploadBlobToAttachmentField(
     table,
     resultImageFieldId,
     recordId,
     resized,
-    `generated-${size}x${size}-${ts}.jpg`,
+    `generated-${width}x${height}-${ts}.jpg`,
   );
+  return { urls };
 }
 
 /** @deprecated 请使用 writeGeneratedImageResults */
@@ -280,6 +348,12 @@ export async function writeGeneratedImageToField(
   recordId: string,
   imageUrl: string,
 ): Promise<string[]> {
-  return writeGeneratedImageResults(table, recordId, imageUrl, fieldId);
+  const { urls } = await writeGeneratedImageResults(
+    table,
+    recordId,
+    imageUrl,
+    fieldId,
+  );
+  return urls;
 }
 // AIGC END

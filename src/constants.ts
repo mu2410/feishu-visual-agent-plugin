@@ -1,5 +1,5 @@
 // AIGC START
-import type { AspectRatio, ImageSize } from './types';
+import type { AspectRatio, ImageSize, ResultImagePixels } from './types';
 
 export const PLUGIN_TITLE = '视觉Agent';
 
@@ -10,14 +10,26 @@ export const IMAGE_MODELS = [
   { label: 'nano-banana-pro', value: 'nano-banana-pro' },
 ];
 
-export const ASPECT_RATIOS: { label: string; value: AspectRatio }[] = [
-  { label: '9:16', value: '9:16' },
-  { label: '16:9', value: '16:9' },
-  { label: '1:1', value: '1:1' },
-  { label: '4:3', value: '4:3' },
-  { label: '3:4', value: '3:4' },
-  { label: 'auto', value: 'auto' },
+export const SUPPORTED_ASPECT_RATIOS: AspectRatio[] = [
+  'auto',
+  '1:1',
+  '16:9',
+  '9:16',
+  '4:3',
+  '3:4',
+  '3:2',
+  '2:3',
+  '5:4',
+  '4:5',
+  '21:9',
+  '1:4',
+  '4:1',
+  '1:8',
+  '8:1',
 ];
+
+export const ASPECT_RATIOS: { label: string; value: AspectRatio }[] =
+  SUPPORTED_ASPECT_RATIOS.map((value) => ({ label: value, value }));
 
 export const IMAGE_SIZES: { label: string; value: ImageSize }[] = [
   { label: '2K', value: '2K' },
@@ -40,6 +52,12 @@ export const DEFAULT_SETTINGS = {
 
 export const SETTINGS_STORAGE_KEY = 'visual-agent-plugin-settings-v2';
 
-/** 结果图列输出边长（生图后缩放为 1440×1440） */
-export const RESULT_IMAGE_1440_SIZE = 1440;
+/** 结果图默认输出尺寸（未填「结果图像素」时使用） */
+export const DEFAULT_RESULT_IMAGE_PIXELS: ResultImagePixels = {
+  width: 1440,
+  height: 1440,
+};
+
+export const MIN_RESULT_IMAGE_PIXEL = 64;
+export const MAX_RESULT_IMAGE_PIXEL = 8192;
 // AIGC END

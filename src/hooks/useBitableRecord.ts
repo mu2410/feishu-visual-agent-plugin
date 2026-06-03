@@ -1,11 +1,12 @@
 // AIGC START
 import { useCallback, useEffect, useState } from 'react';
 import { bitable, type IFieldMeta } from '@lark-base-open/js-sdk';
-import { DEFAULT_SETTINGS } from '../constants';
+import { DEFAULT_SETTINGS, DEFAULT_RESULT_IMAGE_PIXELS } from '../constants';
 import type {
   RecordFieldMapping,
   RecordGenerateParams,
   RecordJobSnapshot,
+  ResultImagePixels,
   VisualAgentState,
 } from '../types';
 import {
@@ -14,8 +15,10 @@ import {
   normalizeAspectRatio,
   normalizeImageSize,
   normalizeModel,
+  parseResultImagePixels,
   readAllReferenceUrls,
   readAttachmentUrls,
+  readPixelCell,
   readRecordSnapshot,
   readSelectCell,
   readTextCell,
@@ -32,6 +35,7 @@ const defaultGenerateParams = (): RecordGenerateParams => ({
   imageSize: DEFAULT_SETTINGS.imageSize,
   imageModel: DEFAULT_SETTINGS.imageModel,
   statusLabel: '',
+  resultImagePixels: DEFAULT_RESULT_IMAGE_PIXELS,
 });
 
 export function useBitableRecord() {
@@ -162,6 +166,11 @@ export function useBitableRecord() {
             recordId,
           );
         }
+        if (mapping.resultImagePixelFieldId) {
+          generateParams.resultImagePixels = parseResultImagePixels(
+            await readPixelCell(table, mapping.resultImagePixelFieldId, recordId),
+          );
+        }
 
         const refCount = referenceImageUrls.length;
         setState((s) => ({
@@ -237,7 +246,7 @@ export function useBitableRecord() {
   );
 
   const persistGeneratedImage = useCallback(
-    async (imageUrl: string, recordId: string) => {
+    async (imageUrl: string, recordId: string, outputPixels: ResultImagePixels) => {
       if (!recordId || !mapping.resultImageFieldId) {
         throw new Error('未找到「结果图」附件字段');
       }
@@ -247,6 +256,7 @@ export function useBitableRecord() {
         recordId,
         imageUrl,
         mapping.resultImageFieldId,
+        outputPixels,
       );
     },
     [mapping.resultImageFieldId],
