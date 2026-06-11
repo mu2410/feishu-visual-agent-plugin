@@ -1,4 +1,8 @@
 // AIGC START
+/**
+ * API 设置面板（可折叠）
+ * 配置 Grsai API Key 与国内/全球节点
+ */
 import { GRSai_NODES } from '../constants';
 import type { PluginSettings } from '../types';
 import { Select } from './Select';

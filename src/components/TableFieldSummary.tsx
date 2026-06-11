@@ -1,4 +1,8 @@
 // AIGC START
+/**
+ * 表格字段匹配状态面板
+ * 展示各标准列是否已成功映射，以及当前行读到的参数值
+ */
 import type { RecordFieldMapping, RecordGenerateParams } from '../types';
 import { formatResultImagePixels } from '../utils/bitableHelpers';
 

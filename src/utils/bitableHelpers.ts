@@ -1,4 +1,16 @@
+
+
+
 // AIGC START
+/**
+ * 多维表格（Bitable）读写工具
+ *
+ * 职责：
+ * - 解析当前选中行、读取/写入单元格
+ * - 按标准列名自动映射字段 ID
+ * - 规范化表格中的比例、尺寸、结果图像素等参数
+ * - 下载生图结果并按指定像素缩放后写回「结果图」附件列
+ */
 import {
   bitable,
   FieldType,
@@ -11,7 +23,12 @@ import type { AspectRatio, ImageSize, RecordFieldMapping, RecordGenerateParams, 
 import { DEFAULT_SETTINGS, DEFAULT_RESULT_IMAGE_PIXELS, MAX_RESULT_IMAGE_PIXEL, MIN_RESULT_IMAGE_PIXEL, SUPPORTED_ASPECT_RATIOS } from '../constants';
 import { resizeImageBlob } from './imageResize';
 
-/** 边栏插件中 getSelection().recordId 常为空，优先读当前视图选中行 */
+// ─── 记录与单元格读取 ─────────────────────────────────────────
+
+/**
+ * 获取当前应操作的 recordId
+ * 边栏插件中 bitable.base.getSelection().recordId 常为空，故优先读视图选中行列表
+ */
 export async function resolveActiveRecordId(): Promise<string | null> {
   try {
     const table = await bitable.base.getActiveTable();
@@ -37,6 +54,34 @@ export async function resolveActiveRecordId(): Promise<string | null> {
   return null;
 }
 
+/**
+ * 获取当前视图选中的全部 recordId（支持多选勾选行）
+ * 若无多选 API，则退回 resolveActiveRecordId 的单条
+ */
+export async function resolveSelectedRecordIds(): Promise<string[]> {
+  const ids: string[] = [];
+  try {
+    const table = await bitable.base.getActiveTable();
+    const view = await table.getActiveView();
+    const getSelected = (
+      view as { getSelectedRecordIdList?: () => Promise<string[]> }
+    ).getSelectedRecordIdList;
+    if (getSelected) {
+      const selected = await getSelected.call(view);
+      if (selected.length > 0) {
+        return [...new Set(selected)];
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const single = await resolveActiveRecordId();
+  if (single) ids.push(single);
+  return ids;
+}
+
+/** 读取文本字段（Prompt 等） */
 export async function readTextCell(
   table: ITable,
   fieldId: string,
@@ -46,6 +91,10 @@ export async function readTextCell(
   return text?.trim() ?? '';
 }
 
+/**
+ * 读取单选字段显示文本
+ * getCellString 有时为空，降级读 getCellValue.text
+ */
 export async function readSelectCell(
   table: ITable,
   fieldId: string,
@@ -64,6 +113,7 @@ export async function readSelectCell(
   return '';
 }
 
+/** 写入单选字段（状态：生成中/成功/失败） */
 export async function writeSelectCell(
   table: ITable,
   fieldId: string,
@@ -75,6 +125,7 @@ export async function writeSelectCell(
   await field.setValue(recordId, optionText);
 }
 
+/** 读取附件字段的全部 URL（结果图、参考图） */
 export async function readAttachmentUrls(
   table: ITable,
   fieldId: string,
@@ -85,6 +136,7 @@ export async function readAttachmentUrls(
   return urls ?? [];
 }
 
+/** 依次读取参考图1~5，合并为 API 所需的 images 数组 */
 export async function readAllReferenceUrls(
   table: ITable,
   fieldIds: string[],
@@ -102,6 +154,7 @@ export async function readAllReferenceUrls(
   return urls;
 }
 
+/** 写入文本字段 */
 export async function writeTextCell(
   table: ITable,
   fieldId: string,
@@ -112,8 +165,12 @@ export async function writeTextCell(
   await field.setValue(recordId, value);
 }
 
+// ─── 参数规范化 ───────────────────────────────────────────────
+
+/** Grsai API 支持的比例集合，用于校验表格单选值 */
 const ASPECT_SET = new Set<string>(SUPPORTED_ASPECT_RATIOS);
 
+/** 将表格「比例」列文本规范为 API 支持的 AspectRatio */
 export function normalizeAspectRatio(raw: string): AspectRatio {
   const t = raw.trim().replace(/：/g, ':');
   if (ASPECT_SET.has(t)) return t as AspectRatio;
@@ -125,6 +182,7 @@ export function normalizeAspectRatio(raw: string): AspectRatio {
   return DEFAULT_SETTINGS.aspectRatio;
 }
 
+/** 将表格「尺寸」列规范为 1K / 2K / 4K */
 export function normalizeImageSize(raw: string): ImageSize {
   const u = raw.trim().toUpperCase();
   if (u === '1K' || u === '2K' || u === '4K') return u as ImageSize;
@@ -133,13 +191,17 @@ export function normalizeImageSize(raw: string): ImageSize {
   return DEFAULT_SETTINGS.imageSize;
 }
 
+/** 将表格「模型」列规范为模型名，空则使用默认模型 */
 export function normalizeModel(raw: string): string {
   const t = raw.trim();
   if (!t) return DEFAULT_SETTINGS.imageModel;
   return t;
 }
 
-/** 从「结果图像素」列解析输出尺寸，支持 1000*1792、1440*1440、1440 等 */
+/**
+ * 从「结果图像素」列解析输出尺寸
+ * 支持：1000*1792、1440*1440、1440（正方形）及 × / x 分隔符
+ */
 export function parseResultImagePixels(
   raw: string,
   fallback: ResultImagePixels = DEFAULT_RESULT_IMAGE_PIXELS,
@@ -165,14 +227,25 @@ export function parseResultImagePixels(
   return fallback;
 }
 
+/** 校验单边像素是否在允许范围内 */
 function isValidResultImagePixel(n: number): boolean {
   return n >= MIN_RESULT_IMAGE_PIXEL && n <= MAX_RESULT_IMAGE_PIXEL;
 }
 
+/** 格式化像素尺寸为 UI 展示字符串，如 1000×1792 */
 export function formatResultImagePixels(pixels: ResultImagePixels): string {
   return `${pixels.width}×${pixels.height}`;
 }
 
+/** 是否为「失败」状态（重跑失败行用） */
+export function isFailedStatusLabel(label: string): boolean {
+  return label.trim() === '失败';
+}
+
+/**
+ * 读取「结果图像素」列
+ * 兼容文本、单选、数字三种字段类型
+ */
 export async function readPixelCell(
   table: ITable,
   fieldId: string,
@@ -193,7 +266,12 @@ export async function readPixelCell(
   return '';
 }
 
-/** 从表格读取指定行的完整生图参数（不依赖 UI 当前状态） */
+// ─── 生图任务快照与字段映射 ───────────────────────────────────
+
+/**
+ * 从表格读取指定行的完整生图参数
+ * 点击「生成图片」时调用，锁定该行数据，避免用户切换行后写错记录
+ */
 export async function readRecordSnapshot(
   recordId: string,
   mapping: RecordFieldMapping,
@@ -240,6 +318,13 @@ export async function readRecordSnapshot(
       await readPixelCell(table, mapping.resultImagePixelFieldId, recordId),
     );
   }
+  if (mapping.statusFieldId) {
+    generateParams.statusLabel = await readSelectCell(
+      table,
+      mapping.statusFieldId,
+      recordId,
+    );
+  }
 
   return {
     recordId,
@@ -249,10 +334,14 @@ export async function readRecordSnapshot(
     imageSize: generateParams.imageSize,
     imageModel: generateParams.imageModel,
     resultImagePixels: generateParams.resultImagePixels,
+    statusLabel: generateParams.statusLabel,
   };
 }
 
-/** 按当前表标准字段名自动映射 */
+/**
+ * 按标准表结构列名自动匹配 fieldId
+ * 列名约定：Prompt、参考图1~5、比例、尺寸、模型、状态、结果图、结果图像素
+ */
 export function guessFieldMapping(
   metaList: { id: string; name: string; type: FieldType }[],
 ): RecordFieldMapping {
@@ -287,10 +376,14 @@ export function guessFieldMapping(
   };
 }
 
+/** 是否具备最低可用字段：Prompt + 结果图 */
 export function isStandardTableMapping(mapping: RecordFieldMapping): boolean {
   return Boolean(mapping.promptFieldId && mapping.resultImageFieldId);
 }
 
+// ─── 生图结果写回 ─────────────────────────────────────────────
+
+/** 从 Grsai 返回的图片 URL 下载二进制 */
 async function downloadImageBlob(imageUrl: string): Promise<Blob> {
   const res = await fetch(imageUrl);
   if (!res.ok) {
@@ -299,6 +392,7 @@ async function downloadImageBlob(imageUrl: string): Promise<Blob> {
   return res.blob();
 }
 
+/** 将 Blob 上传为附件并返回飞书 CDN URL */
 async function uploadBlobToAttachmentField(
   table: ITable,
   fieldId: string,
@@ -315,11 +409,14 @@ async function uploadBlobToAttachmentField(
   return urls ?? [];
 }
 
+/** 写回结果图的返回值 */
 export interface WriteGeneratedImageResult {
   urls: string[];
 }
 
-/** 下载生图结果，按指定宽×高缩放后写入「结果图」 */
+/**
+ * 下载生图结果，按「结果图像素」指定的宽×高缩放（cover 居中裁剪）后写入「结果图」
+ */
 export async function writeGeneratedImageResults(
   table: ITable,
   recordId: string,

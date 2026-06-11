@@ -1,4 +1,8 @@
 // AIGC START
+/**
+ * 通用下拉选择组件
+ * 用于设置面板等表单场景
+ */
 import type { SelectHTMLAttributes } from 'react';
 
 interface Option {

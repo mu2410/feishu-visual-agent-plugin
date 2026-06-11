@@ -1,10 +1,16 @@
 // AIGC START
-/** 飞书 iframe 内 clipboard API 常被限制，需降级方案 */
+/**
+ * 剪贴板工具
+ * 飞书 iframe 内 navigator.clipboard 常被权限策略拦截，需 textarea + execCommand 降级
+ */
+
+/** 复制文本到系统剪贴板 */
 export async function copyToClipboard(text: string): Promise<void> {
   if (!text) {
     throw new Error('没有可复制的内容');
   }
 
+  // 优先使用现代 Clipboard API
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
@@ -14,6 +20,7 @@ export async function copyToClipboard(text: string): Promise<void> {
     }
   }
 
+  // 降级：隐藏 textarea + document.execCommand('copy')
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.setAttribute('readonly', '');

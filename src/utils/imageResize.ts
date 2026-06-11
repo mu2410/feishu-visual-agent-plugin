@@ -1,5 +1,12 @@
 // AIGC START
-/** 将图片缩放为固定尺寸（默认居中裁剪 cover） */
+/**
+ * 浏览器端图片缩放工具
+ * 使用 Canvas 将 Blob 缩放到指定宽×高，供写回「结果图」前处理
+ */
+/**
+ * 将图片 Blob 缩放为固定尺寸
+ * @param mode cover = 居中裁剪铺满；contain = 完整显示并留白
+ */
 export async function resizeImageBlob(
   blob: Blob,
   width: number,
@@ -17,6 +24,7 @@ export async function resizeImageBlob(
   }
 
   if (mode === 'cover') {
+    // 取较大缩放比，裁剪源图中心区域以填满目标尺寸
     const scale = Math.max(width / bitmap.width, height / bitmap.height);
     const sw = width / scale;
     const sh = height / scale;
@@ -24,6 +32,7 @@ export async function resizeImageBlob(
     const sy = (bitmap.height - sh) / 2;
     ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, width, height);
   } else {
+    // 取较小缩放比，完整显示图片，空白处填白
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
     const scale = Math.min(width / bitmap.width, height / bitmap.height);
@@ -36,6 +45,7 @@ export async function resizeImageBlob(
 
   bitmap.close();
 
+  // 输出 JPEG，质量 0.92
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (result) => {

@@ -1,5 +1,10 @@
 // AIGC START
-/** 将运行时/API 英文报错转为中文提示 */
+/**
+ * 错误信息中文化
+ * 将 SDK / fetch / API 英文报错映射为用户可读的中文提示
+ */
+
+/** 将运行时/API 英文报错转为中文提示；已是中文则原样返回 */
 export function toChineseError(err: unknown): string {
   const raw =
     err instanceof Error ? err.message : typeof err === 'string' ? err : '';

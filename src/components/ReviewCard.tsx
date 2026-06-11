@@ -1,4 +1,9 @@
 // AIGC START
+/**
+ * 成图预览卡片
+ * 展示当前选中行「结果图」列的第一张附件
+ */
+
 interface Props {
   imageUrl: string | null;
   onView?: () => void;
